@@ -8,8 +8,22 @@ const formatoData = new Intl.DateTimeFormat("it-IT", { day: "numeric", month: "s
 const formatoGiornoMese = new Intl.DateTimeFormat("it-IT", { day: "numeric", month: "short" });
 const formatoMeseAnno = new Intl.DateTimeFormat("it-IT", { month: "long", year: "numeric" });
 
-/** 1275 -> "12,75 €" */
-export function euro(centesimi) {
+// Modalità privacy: quando è attiva, euro() scrive ••••• € al posto delle cifre.
+// Gli importi nei campi da compilare (perCampo) restano visibili.
+let importiNascosti = false;
+
+export function nascondiImporti(nascosti) {
+    importiNascosti = nascosti;
+}
+
+export function importiSonoNascosti() {
+    return importiNascosti;
+}
+
+/** 1275 -> "12,75 €" (o "••••• €" in modalità privacy, a meno che mostraSempre sia true) */
+export function euro(centesimi, mostraSempre = false) {
+    //   è lo spazio "che non va a capo", lo stesso che usa Intl tra cifra ed €
+    if (importiNascosti && !mostraSempre) return "••••• €";
     return formatoEuro.format(centesimi / 100);
 }
 

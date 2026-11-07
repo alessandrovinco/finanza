@@ -96,6 +96,34 @@ export function collegaIconaColore(modulo) {
     modulo.querySelectorAll("[data-colore]").forEach(b => b.onclick = () => modulo.colore.value = b.dataset.colore);
 }
 
+/**
+ * Chiede conferma con una finestra dell'app e aspetta la risposta: true = conferma, false = Annulla.
+ * Si usa al posto di confirm() del browser, che alcuni browser bloccano (rispondendo sempre "Annulla").
+ * Il bottone di conferma è rosso: per ora serve solo per eliminare qualcosa.
+ */
+export function chiediConferma(messaggio, etichetta = "Elimina") {
+    const finestra = document.createElement("dialog");
+    finestra.innerHTML = `
+        <div class="modulo">
+            <p class="messaggio-conferma">${esc(messaggio)}</p>
+            <div class="azioni">
+                <button type="button" class="bottone secondario" data-risposta="">Annulla</button>
+                <button type="button" class="conferma-pericolo" data-risposta="si">${esc(etichetta)}</button>
+            </div>
+        </div>`;
+    document.body.append(finestra);
+
+    return new Promise(risolvi => {
+        finestra.querySelectorAll("[data-risposta]").forEach(b => b.onclick = () => finestra.close(b.dataset.risposta));
+        // "close" arriva sia dai bottoni sia dal tasto Esc (che vale come Annulla)
+        finestra.onclose = () => {
+            finestra.remove();
+            risolvi(finestra.returnValue === "si");
+        };
+        finestra.showModal();
+    });
+}
+
 /** Mostra un errore in fondo a un modulo, sopra il tasto Salva */
 export function erroreModulo(modulo, messaggio) {
     const p = modulo.querySelector(".errore-modulo");

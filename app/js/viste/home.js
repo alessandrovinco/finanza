@@ -1,12 +1,35 @@
 // La Home: quanto hai speso (o incassato) nel periodo scelto, diviso per categoria.
 
-import { leggi } from "../database.js";
+import { leggi, modifica, scrivi } from "../database.js";
 import { giorniDallUltimoBackup } from "../backup.js";
 import { daTesto, dataLeggibile, esc, euro, giornoMese, meseAnno, oggi, spostaGiorni, testoData } from "../utili.js";
-import { bollino, impostaTitolo, riga, schede } from "./comuni.js";
+import { avvisa, bollino, impostaTitolo, riga, schede } from "./comuni.js";
+import { bottoneImporta, collegaImporta } from "./importazione.js";
 
 const TIPI = { spesa: "Spese", entrata: "Entrate" };
 const PERIODI = { giorno: "Giorno", settimana: "Settimana", mese: "Mese", anno: "Anno" };
+
+// Cosa crea "Inizia da zero" nella schermata di benvenuto: [nome, icona, colore]
+const CONTI_INIZIALI = [
+    ["Conto corrente", "🏦", "#1e88e5"],
+    ["Contanti", "💵", "#43a047"],
+];
+const CATEGORIE_INIZIALI = {
+    spesa: [
+        ["Spesa", "🛒", "#43a047"],
+        ["Ristoranti", "🍕", "#fb8c00"],
+        ["Trasporti", "🚌", "#1e88e5"],
+        ["Casa", "🏠", "#8e24aa"],
+        ["Altro", "❓", "#757575"],
+    ],
+    entrata: [
+        ["Stipendio", "💵", "#43a047"],
+        ["Regali", "🎁", "#d81b60"],
+        ["Rimborsi", "🔁", "#039be5"],
+        ["Interessi", "🏛️", "#fdd835"],
+        ["Altro", "💰", "#757575"],
+    ],
+};
 
 // Dopo quanti giorni senza backup compare il promemoria in cima alla Home
 const GIORNI_PROMEMORIA_BACKUP = 3;
@@ -33,7 +56,11 @@ export function mostraHome(contenitore) {
         where c.archiviato = 0
         order by c.posizione
     `);
-    if (conti.length === 0) return mostraBenvenuto();
+    if (conti.length === 0) {
+        // Nessun conto attivo: è il primo avvio, oppure sono tutti archiviati
+        const archiviati = leggi("select count(*) as n from conti")[0].n;
+        return archiviati ? mostraTuttiArchiviati() : mostraBenvenuto();
+    }
     if (!conti.some(c => c.id === stato.conto)) stato.conto = "";
 
     const saldo = stato.conto
@@ -84,22 +111,57 @@ export function mostraHome(contenitore) {
     collega();
 }
 
+// La configurazione iniziale: importare dei dati oppure partire con conti e categorie di base
 function mostraBenvenuto() {
     main.innerHTML = `
         <div class="scheda benvenuto">
             <h2>Benvenuto!</h2>
-            <p>Per iniziare importa i tuoi dati da Money Manager, oppure crea il primo conto.</p>
-            <a class="bottone" href="#/dati">Importa da Money Manager</a>
-            <a class="bottone secondario" href="#/conto/nuovo">Crea un conto</a>
+            <p>Come vuoi iniziare?</p>
+            ${bottoneImporta("📥 Ho già dei dati")}
+            <p class="nota-piccola">Un backup di questa app o di Money Manager.</p>
+            <button class="bottone secondario" id="inizia-da-zero">✨ Inizia da zero</button>
+            <p class="nota-piccola">Crea i conti Conto corrente e Contanti, 5 categorie di spesa e 5 di entrata:
+               potrai modificarli quando vuoi.</p>
         </div>`;
+
+    collegaImporta(main, analisi => {
+        mostraHome(main);
+        avvisa(analisi.messaggio);
+    });
+    main.querySelector("#inizia-da-zero").onclick = async () => {
+        await modifica(creaDatiIniziali);
+        mostraHome(main);
+    };
 }
 
-/** Un avviso che porta alla pagina Dati, se il backup è vecchio o non è mai stato fatto */
+function creaDatiIniziali() {
+    let posizione = 0;
+    for (const [nome, icona, colore] of CONTI_INIZIALI) {
+        scrivi("insert into conti (id, nome, icona, colore, posizione) values (?, ?, ?, ?, ?)",
+            [crypto.randomUUID(), nome, icona, colore, ++posizione]);
+    }
+    // Le categorie solo se non ce ne sono già, per non crearle doppie
+    if (leggi("select count(*) as n from categorie")[0].n > 0) return;
+    for (const [tipo, categorie] of Object.entries(CATEGORIE_INIZIALI)) {
+        for (const [nome, icona, colore] of categorie) {
+            scrivi("insert into categorie (id, tipo, nome, icona, colore, posizione) values (?, ?, ?, ?, ?, ?)",
+                [crypto.randomUUID(), tipo, nome, icona, colore, ++posizione]);
+        }
+    }
+}
+
+function mostraTuttiArchiviati() {
+    main.innerHTML = `
+        <p class="vuoto">Tutti i tuoi conti sono archiviati.<br>
+            <a href="#/conti">Vai ai conti</a> per riattivarne uno, oppure crea un conto nuovo.</p>`;
+}
+
+/** Un avviso che porta alle Impostazioni, se il backup è vecchio o non è mai stato fatto */
 function promemoriaBackup() {
     const giorni = giorniDallUltimoBackup();
     if (giorni !== null && giorni < GIORNI_PROMEMORIA_BACKUP) return "";
     const testo = giorni === null ? "Non hai ancora fatto un backup." : `Ultimo backup ${giorni} giorni fa.`;
-    return `<a class="promemoria" href="#/dati">💾 ${testo} <strong>Fallo ora ›</strong></a>`;
+    return `<a class="promemoria" href="#/impostazioni">💾 ${testo} <strong>Fallo ora ›</strong></a>`;
 }
 
 /** Una categoria nell'elenco sotto la ciambella. Toccandola si vedono i suoi movimenti. */

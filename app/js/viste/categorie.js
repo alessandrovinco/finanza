@@ -2,7 +2,7 @@
 
 import { leggi, modifica, scrivi } from "../database.js";
 import { esc } from "../utili.js";
-import { bollino, campiIconaColore, collegaIconaColore, erroreModulo, impostaTitolo, schede, torna } from "./comuni.js";
+import { bollino, campiIconaColore, chiediConferma, collegaIconaColore, erroreModulo, impostaTitolo, schede, torna } from "./comuni.js";
 
 const TIPI = { spesa: "Spese", entrata: "Entrate" };
 
@@ -103,7 +103,7 @@ export function mostraCategoria(main, id, parametri) {
     };
 
     modulo.querySelector("#elimina")?.addEventListener("click", async () => {
-        if (!confirm(`Eliminare la categoria "${categoria.nome}"?`)) return;
+        if (!await chiediConferma(`Eliminare la categoria "${categoria.nome}"?`)) return;
         await modifica(() => scrivi("delete from categorie where id = ?", [id]));
         torna();
     });

@@ -1,9 +1,9 @@
 // Il modulo per inserire o modificare una spesa, un'entrata o un trasferimento.
 // Indirizzi: #/movimento/nuovo?tipo=spesa   oppure   #/movimento/<id> per modificarne uno.
 
-import { leggi, modifica, scrivi } from "../database.js";
+import { impostazione, leggi, modifica, scrivi } from "../database.js";
 import { centesimi, esc, oggi, perCampo, spostaGiorni } from "../utili.js";
-import { bollino, erroreModulo, impostaTitolo, schede, torna } from "./comuni.js";
+import { bollino, campiIconaColore, chiediConferma, collegaIconaColore, erroreModulo, impostaTitolo, schede, torna } from "./comuni.js";
 
 const TIPI = { spesa: "Spesa", entrata: "Entrata", trasferimento: "Trasferimento" };
 const SCORCIATOIE_DATA = { 0: "Oggi", 1: "Ieri", 2: "2 giorni fa" };
@@ -16,7 +16,7 @@ export function mostraMovimento(main, id, parametri) {
         tipo: TIPI[parametri.get("tipo")] ? parametri.get("tipo") : "spesa",
         data: oggi(),
         importo: null,
-        conto_id: ultimoContoUsato(),
+        conto_id: contoProposto(),
         conto_destinazione_id: null,
         categoria_id: null,
         nota: "",
@@ -55,7 +55,10 @@ export function mostraMovimento(main, id, parametri) {
             <label class="campo">
                 <span class="non-trasferimento">Conto</span>
                 <span class="solo-trasferimento">Dal conto</span>
-                <select name="conto">${opzioniConti(conti, m.conto_id)}</select>
+                <select name="conto">
+                    ${m.conto_id === null ? `<option value="">Scegli…</option>` : ""}
+                    ${opzioniConti(conti, m.conto_id)}
+                </select>
             </label>
 
             <label class="campo solo-trasferimento">Al conto
@@ -68,11 +71,11 @@ export function mostraMovimento(main, id, parametri) {
             <div class="campo non-trasferimento">Categoria
                 ${["spesa", "entrata"].map(tipo => `
                     <div class="griglia solo-${tipo}">
-                        ${categorie.filter(c => c.tipo === tipo).map(c => `
-                            <button type="button" class="cella ${c.id === m.categoria_id ? "scelta" : ""}" data-categoria="${esc(c.id)}">
-                                ${bollino(c.icona, c.colore)}
-                                <span class="nome">${esc(c.nome)}</span>
-                            </button>`).join("")}
+                        ${categorie.filter(c => c.tipo === tipo).map(c => cellaCategoria(c, m.categoria_id)).join("")}
+                        <button type="button" class="cella" data-nuova-categoria>
+                            ${bollino("＋", "#f4b81f")}
+                            <span class="nome">Nuova</span>
+                        </button>
                     </div>`).join("")}
             </div>
 
@@ -80,7 +83,8 @@ export function mostraMovimento(main, id, parametri) {
                 <div class="chips">${Object.entries(SCORCIATOIE_DATA).map(([giorni, nome]) =>
                     `<button type="button" data-giorni="${giorni}">${nome}</button>`).join("")}
                 </div>
-                <input type="date" name="data" value="${m.data}">
+                <!-- max: il calendario non lascia scegliere i giorni dopo oggi -->
+                <input type="date" name="data" value="${m.data}" max="${oggi()}">
             </div>
 
             <label class="campo">Nota
@@ -90,7 +94,24 @@ export function mostraMovimento(main, id, parametri) {
             <p class="errore-modulo" hidden></p>
             <button type="submit">Salva</button>
             ${esistente ? `<button type="button" class="pericolo" id="elimina">Elimina movimento</button>` : ""}
-        </form>`;
+        </form>
+
+        <!-- Finestra per creare una categoria senza lasciare il movimento.
+             Sta fuori dal modulo principale: un form non può contenerne un altro. -->
+        <dialog>
+            <form class="modulo" novalidate>
+                <h2 class="titolo-finestra"></h2>
+                <label class="campo">Nome
+                    <input name="nome" autocomplete="off">
+                </label>
+                ${campiIconaColore("🛒", "#43a047")}
+                <p class="errore-modulo" hidden></p>
+                <div class="azioni">
+                    <button type="button" class="bottone secondario" id="annulla">Annulla</button>
+                    <button type="submit">Crea</button>
+                </div>
+            </form>
+        </dialog>`;
 
     const modulo = main.querySelector("form");
     let categoria = m.categoria_id;
@@ -108,6 +129,47 @@ export function mostraMovimento(main, id, parametri) {
         modulo.querySelectorAll("[data-categoria]").forEach(c => c.classList.toggle("scelta", c.dataset.categoria === nuova));
     }
     modulo.querySelectorAll("[data-categoria]").forEach(c => c.onclick = () => scegliCategoria(c.dataset.categoria));
+
+    // "+ Nuova": apre la finestra, crea la categoria e la sceglie subito.
+    // Il modulo del movimento non viene ridisegnato, quindi quanto già scritto resta lì.
+    const finestra = main.querySelector("dialog");
+    const moduloCategoria = finestra.querySelector("form");
+    collegaIconaColore(moduloCategoria);
+    modulo.querySelectorAll("[data-nuova-categoria]").forEach(b => b.onclick = () => {
+        moduloCategoria.reset();
+        moduloCategoria.querySelector(".errore-modulo").hidden = true;
+        finestra.querySelector(".titolo-finestra").textContent =
+            modulo.dataset.tipo === "spesa" ? "Nuova categoria di spesa" : "Nuova categoria di entrata";
+        finestra.showModal();
+        moduloCategoria.nome.focus();
+    });
+    finestra.querySelector("#annulla").onclick = () => finestra.close();
+
+    moduloCategoria.onsubmit = async evento => {
+        evento.preventDefault();
+        const nuova = {
+            id: crypto.randomUUID(),
+            tipo: modulo.dataset.tipo,
+            nome: moduloCategoria.nome.value.trim(),
+            icona: moduloCategoria.icona.value.trim(),
+            colore: moduloCategoria.colore.value,
+        };
+        if (!nuova.nome) return erroreModulo(moduloCategoria, "Dai un nome alla categoria.");
+        if (!nuova.icona) return erroreModulo(moduloCategoria, "Scegli un'icona.");
+
+        await modifica(() => scrivi(`
+            insert into categorie (id, tipo, nome, icona, colore, posizione)
+            values (?, ?, ?, ?, ?, (select coalesce(max(posizione), 0) + 1 from categorie))
+        `, [nuova.id, nuova.tipo, nuova.nome, nuova.icona, nuova.colore]));
+
+        // La nuova cella va prima di "+ Nuova", nella griglia del tipo giusto
+        const piu = modulo.querySelector(`.solo-${nuova.tipo} [data-nuova-categoria]`);
+        piu.insertAdjacentHTML("beforebegin", cellaCategoria(nuova, null));
+        piu.previousElementSibling.onclick = () => scegliCategoria(nuova.id);
+        tipoDi[nuova.id] = nuova.tipo;
+        scegliCategoria(nuova.id);
+        finestra.close();
+    };
 
     // Le scorciatoie Oggi / Ieri / 2 giorni fa, evidenziate se corrispondono alla data scelta
     function evidenziaData() {
@@ -131,7 +193,10 @@ export function mostraMovimento(main, id, parametri) {
 
         const errore =
             !importo ? "Scrivi un importo valido, per esempio 12,50." :
+            !modulo.conto.value ? "Scegli il conto." :
             !modulo.data.value ? "Scegli una data." :
+            // Le date "AAAA-MM-GG" si confrontano come testi: "2026-11-04" > "2026-11-03"
+            modulo.data.value > oggi() ? "La data non può essere nel futuro." :
             trasferimento && !modulo.destinazione.value ? "Scegli il conto che riceve i soldi." :
             trasferimento && modulo.destinazione.value === modulo.conto.value ? "I due conti devono essere diversi." :
             !trasferimento && !categoria ? "Scegli una categoria." :
@@ -161,11 +226,19 @@ export function mostraMovimento(main, id, parametri) {
 
     if (esistente) {
         modulo.querySelector("#elimina").onclick = async () => {
-            if (!confirm("Eliminare questo movimento?")) return;
+            if (!await chiediConferma("Eliminare questo movimento?")) return;
             await modifica(() => scrivi("delete from movimenti where id = ?", [esistente.id]));
             torna();
         };
     }
+}
+
+function cellaCategoria(c, scelta) {
+    return `
+        <button type="button" class="cella ${c.id === scelta ? "scelta" : ""}" data-categoria="${esc(c.id)}">
+            ${bollino(c.icona, c.colore)}
+            <span class="nome">${esc(c.nome)}</span>
+        </button>`;
 }
 
 function opzioniConti(conti, scelto) {
@@ -174,7 +247,18 @@ function opzioniConti(conti, scelto) {
     ).join("");
 }
 
-/** Per un movimento nuovo proponiamo il conto usato l'ultima volta */
+/**
+ * Il conto già scelto in un movimento nuovo, secondo l'impostazione della pagina Conti:
+ * "nessuno" (predefinito: il conto si sceglie ogni volta), "ultimo", oppure l'id del conto principale.
+ */
+function contoProposto() {
+    const scelta = impostazione("conto_proposto", "nessuno");
+    if (scelta === "nessuno") return null;
+    if (scelta === "ultimo") return ultimoContoUsato();
+    // Se il conto principale è stato archiviato o eliminato, non si propone niente
+    return leggi("select id from conti where id = ? and archiviato = 0", [scelta])[0]?.id ?? null;
+}
+
 function ultimoContoUsato() {
     return leggi(`
         select m.conto_id from movimenti m join conti c on c.id = m.conto_id

@@ -13,9 +13,9 @@ const CACHE = "finanza";
 const FILE_APP = [
     "./", "index.html", "stile.css", "manifest.webmanifest", "icona-180.png", "icona-192.png",
     "lib/sql-wasm.js", "lib/sql-wasm.wasm", "lib/jszip.min.js",
-    "js/app.js", "js/database.js", "js/utili.js", "js/backup.js", "js/importa-mm.js",
-    "js/viste/comuni.js", "js/viste/home.js", "js/viste/movimento.js",
-    "js/viste/conti.js", "js/viste/categorie.js", "js/viste/dati.js",
+    "js/app.js", "js/database.js", "js/utili.js", "js/backup.js", "js/importa.js", "js/importa-mm.js",
+    "js/viste/comuni.js", "js/viste/home.js", "js/viste/movimento.js", "js/viste/conti.js",
+    "js/viste/categorie.js", "js/viste/impostazioni.js", "js/viste/importazione.js",
 ];
 
 self.addEventListener("install", evento => {

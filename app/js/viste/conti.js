@@ -1,8 +1,8 @@
 // La pagina dei conti (#/conti) e il modulo per crearne o modificarne uno (#/conto/<id>).
 
-import { leggi, modifica, scrivi } from "../database.js";
+import { impostazione, leggi, modifica, scrivi } from "../database.js";
 import { dataLeggibile, esc, euro } from "../utili.js";
-import { campiIconaColore, collegaIconaColore, erroreModulo, impostaTitolo, riga, torna } from "./comuni.js";
+import { campiIconaColore, chiediConferma, collegaIconaColore, erroreModulo, impostaTitolo, riga, torna } from "./comuni.js";
 
 export function mostraConti(main) {
     impostaTitolo("Conti");
@@ -25,9 +25,14 @@ export function mostraConti(main) {
         limit 20
     `);
 
+    // "nessuno", "ultimo" oppure l'id del conto principale: si sceglie in Impostazioni
+    // (vedi anche contoProposto in movimento.js)
+    const proposto = impostazione("conto_proposto", "nessuno");
+
     const rigaConto = c => riga({
         icona: c.icona, colore: c.colore, titolo: c.nome,
-        sotto: c.escluso_dal_totale ? "Escluso dal totale" : "",
+        sotto: [c.id === proposto && !c.archiviato && "⭐ Principale",
+                c.escluso_dal_totale && "Escluso dal totale"].filter(Boolean).join(" · "),
         importo: euro(c.saldo), link: `#/conto/${c.id}`, attenuata: c.archiviato,
     });
 
@@ -119,7 +124,7 @@ export function mostraConto(main, id) {
     };
 
     modulo.querySelector("#elimina")?.addEventListener("click", async () => {
-        if (!confirm(`Eliminare il conto "${conto.nome}"?`)) return;
+        if (!await chiediConferma(`Eliminare il conto "${conto.nome}"?`)) return;
         await modifica(() => scrivi("delete from conti where id = ?", [id]));
         torna();
     });

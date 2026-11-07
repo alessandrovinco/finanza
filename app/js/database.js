@@ -6,9 +6,21 @@
 //   database (un blocco di byte) in IndexedDB, la "memoria" del sito.
 // - Ogni modifica va salvata con salva(), altrimenti si perde chiudendo l'app.
 
-// Quando cambieremo le tabelle aumenteremo questo numero e aggiungeremo le
-// istruzioni per aggiornare i database (e i backup) creati con la versione precedente.
-const VERSIONE_SCHEMA = 1;
+// La versione delle tabelle è scritta dentro il database (pragma user_version).
+// SCHEMA crea le tabelle della versione 1; ogni voce di AGGIORNAMENTI porta un
+// database dalla versione precedente a quella indicata. Così un database vecchio
+// (o un backup vecchio) viene aggiornato da solo, un passo alla volta.
+const AGGIORNAMENTI = {
+    // Versione 2: le impostazioni dell'app (es. quale conto proporre nei movimenti nuovi).
+    // Stanno nel database, così viaggiano insieme al backup.
+    2: `
+        create table impostazioni (
+            chiave  text primary key,
+            valore  text not null
+        );
+    `,
+};
+const VERSIONE_SCHEMA = Math.max(...Object.keys(AGGIORNAMENTI).map(Number));
 
 const SCHEMA = `
     create table conti (
@@ -70,13 +82,25 @@ export async function apriDatabase() {
     SQL = await initSqlJs({ locateFile: nome => `lib/${nome}` });
     const salvato = await memoria("get", "database");
     db = salvato ? new SQL.Database(salvato) : nuovoDatabase();
+    aggiornaSchema(db);
 }
 
 function nuovoDatabase() {
     const nuovo = new SQL.Database();
     nuovo.exec(SCHEMA);
-    nuovo.exec(`pragma user_version = ${VERSIONE_SCHEMA}`);
+    nuovo.exec("pragma user_version = 1");
     return nuovo;
+}
+
+/** Applica gli aggiornamenti che mancano a questo database (nessuno, se è già all'ultima versione). */
+function aggiornaSchema(database) {
+    const versione = leggi("pragma user_version", [], database)[0].user_version;
+    for (let v = versione + 1; v <= VERSIONE_SCHEMA; v++) {
+        database.exec("begin");
+        database.exec(AGGIORNAMENTI[v]);
+        database.exec(`pragma user_version = ${v}`);
+        database.exec("commit");
+    }
 }
 
 /** Apre un altro file SQLite (es. quello di Money Manager) senza toccare il nostro. */
@@ -84,15 +108,33 @@ export function apriFileSqlite(byte) {
     return new SQL.Database(byte);
 }
 
-/** Sostituisce il database con quello di un backup, dopo aver controllato che sia dei nostri. */
-export function sostituisciDatabase(byte) {
+/**
+ * Apre il database di un backup, controlla che sia dei nostri e lo porta all'ultima versione.
+ * Non tocca i dati attuali: per usarlo davvero serve sostituisciDatabase().
+ */
+export function apriBackup(byte) {
     const candidato = new SQL.Database(byte);
-    const versione = leggi("pragma user_version", [], candidato)[0].user_version;
-    const tabelle = leggi("select name from sqlite_master where name = 'movimenti'", [], candidato);
-    if (tabelle.length === 0 || versione < 1 || versione > VERSIONE_SCHEMA) {
+    let versione, tabelle;
+    try {
+        versione = leggi("pragma user_version", [], candidato)[0].user_version;
+        tabelle = leggi("select name from sqlite_master where name = 'movimenti'", [], candidato);
+    } catch {
+        tabelle = []; // non è nemmeno un file SQLite
+    }
+    if (tabelle.length === 0 || versione < 1) {
         candidato.close();
         throw new Error("Questo file non è un backup valido di questa app.");
     }
+    if (versione > VERSIONE_SCHEMA) {
+        candidato.close();
+        throw new Error("Questo backup è stato fatto con una versione più recente dell'app.");
+    }
+    aggiornaSchema(candidato); // un backup fatto con una versione precedente dell'app
+    return candidato;
+}
+
+/** Mette al posto del database attuale uno aperto con apriBackup(). */
+export function sostituisciDatabase(candidato) {
     db.close();
     db = candidato;
 }
@@ -113,6 +155,16 @@ export function leggi(sql, parametri = [], database = db) {
 
 export function scrivi(sql, parametri = []) {
     db.run(sql, parametri);
+}
+
+/** Legge un'impostazione; se non è mai stata scelta restituisce il valore predefinito. */
+export function impostazione(chiave, predefinito) {
+    return leggi("select valore from impostazioni where chiave = ?", [chiave])[0]?.valore ?? predefinito;
+}
+
+/** Da usare dentro modifica(), come scrivi() */
+export function salvaImpostazione(chiave, valore) {
+    scrivi("insert or replace into impostazioni (chiave, valore) values (?, ?)", [chiave, valore]);
 }
 
 /** Esegue più scritture "tutte o nessuna": se una fallisce, il database torna com'era. */

@@ -35,30 +35,42 @@ const ICONE = {
 
 const TIPI = { Expense: "spesa", Income: "entrata" };
 
-/** Sostituisce tutti i dati dell'app con quelli del backup. Restituisce un riepilogo. */
-export async function importaMoneyManager(file) {
-    const byte = new Uint8Array(await file.arrayBuffer());
+/** Apre il database contenuto nel backup (i byte del file .mmbackup). Chi lo apre poi lo chiude. */
+export async function apriMoneyManager(byte) {
     const zip = await JSZip.loadAsync(byte.slice(8)).catch(() => null);
     const voce = zip?.file("MyFinance.db");
     if (!voce) throw new Error("Questo file non sembra un backup di Money Manager.");
+    return apriFileSqlite(await voce.async("uint8array"));
+}
 
-    const mm = apriFileSqlite(await voce.async("uint8array"));
-    try {
-        // Se qualcosa va storto (anche la verifica dei saldi) non cambia niente
-        inTransazione(() => {
-            scrivi("delete from movimenti");
-            scrivi("delete from categorie");
-            scrivi("delete from conti");
-            copiaConti(mm);
-            copiaCategorie(mm);
-            copiaMovimenti(mm);
-            verificaSaldi(mm);
-        });
-    } finally {
-        mm.close();
-    }
+/** Quanti conti, categorie e movimenti verrebbero importati, e di che periodo */
+export function riepilogoMoneyManager(mm) {
+    return leggi(`
+        with tutti as (
+            select date from "transaction" where isRemoved = 0
+            union all
+            select date from transfer where isRemoved = 0
+        )
+        select (select count(*) from account where isRemoved = 0) as conti,
+               (select count(*) from category where isRemoved = 0) as categorie,
+               count(*) as movimenti, min(date) as dal, max(date) as al
+        from tutti
+    `, [], mm)[0];
+}
+
+/** Sostituisce tutti i dati dell'app con quelli del backup aperto con apriMoneyManager(). */
+export async function importaMoneyManager(mm) {
+    // Se qualcosa va storto (anche la verifica dei saldi) non cambia niente
+    inTransazione(() => {
+        scrivi("delete from movimenti");
+        scrivi("delete from categorie");
+        scrivi("delete from conti");
+        copiaConti(mm);
+        copiaCategorie(mm);
+        copiaMovimenti(mm);
+        verificaSaldi(mm);
+    });
     await salva();
-    return leggi("select count(*) as movimenti, min(data) as dal, max(data) as al from movimenti")[0];
 }
 
 function copiaConti(mm) {
@@ -132,7 +144,8 @@ function verificaSaldi(mm) {
 
     const sbagliati = leggi("select c.nome, s.id, s.saldo from saldi s join conti c on c.id = s.id")
         .filter(s => s.saldo !== (attesi[s.id] ?? 0))
-        .map(s => `${s.nome} (${euro(s.saldo)} invece di ${euro(attesi[s.id] ?? 0)})`);
+        // true: questo messaggio mostra le cifre anche in modalità privacy, altrimenti sarebbe inutile
+        .map(s => `${s.nome} (${euro(s.saldo, true)} invece di ${euro(attesi[s.id] ?? 0, true)})`);
     if (sbagliati.length) {
         throw new Error(`I saldi non tornano per: ${sbagliati.join(", ")}. Nessun dato importato.`);
     }

@@ -1,7 +1,7 @@
-// Backup e ripristino: il backup è uno ZIP che contiene il file del database
-// (finanza.db). Si può aprire anche con DB Browser for SQLite.
+// Il backup è uno ZIP che contiene il file del database (finanza.db).
+// Si può aprire anche con DB Browser for SQLite. Il ripristino sta in importa.js.
 
-import { esportaDatabase, sostituisciDatabase, salva } from "./database.js";
+import { esportaDatabase } from "./database.js";
 import { daTesto, oggi } from "./utili.js";
 
 // La data dell'ultimo backup sta nel localStorage, la piccola memoria chiave-valore
@@ -47,14 +47,6 @@ export async function creaBackup() {
     scarica(file);
     segnaBackup();
     return true;
-}
-
-export async function ripristinaBackup(file) {
-    const zip = await JSZip.loadAsync(file).catch(() => null);
-    const voce = zip?.file("finanza.db");
-    if (!voce) throw new Error("Questo file non è un backup di questa app.");
-    sostituisciDatabase(await voce.async("uint8array"));
-    await salva();
 }
 
 // Per far "scaricare" un file creato dalla pagina si crea un link invisibile e lo si clicca
