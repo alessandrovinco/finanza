@@ -6,7 +6,7 @@
 //   - le righe cancellate restano, marcate con isRemoved = 1
 //   - conto e categoria di un movimento stanno nella tabella sync_link
 
-import { apriFileSqlite, inTransazione, leggi, scrivi, salva } from "./database.js";
+import { apriFileSqlite, compatta, controllaDati, inTransazione, leggi, scrivi, salva } from "./database.js";
 import { euro } from "./utili.js";
 
 // Le categorie predefinite di Money Manager hanno il nome vuoto
@@ -68,8 +68,14 @@ export async function importaMoneyManager(mm) {
         copiaConti(mm);
         copiaCategorie(mm);
         copiaMovimenti(mm);
+        try {
+            controllaDati();
+        } catch (errore) {
+            throw new Error(`Il backup contiene dati non validi (${errore.message}). Nessun dato importato.`);
+        }
         verificaSaldi(mm);
     });
+    compatta(); // dei dati sostituiti non resta traccia nel file (vedi cancellaTutto in database.js)
     await salva();
 }
 
@@ -152,7 +158,7 @@ function verificaSaldi(mm) {
 }
 
 function icona(nome) {
-    return ICONE[nome] ?? "💰";
+    return Object.hasOwn(ICONE, nome) ? ICONE[nome] : "💰";
 }
 
 /** Money Manager salva i colori come numero (es. 4290273313): ci servono in formato '#rrggbb'. */

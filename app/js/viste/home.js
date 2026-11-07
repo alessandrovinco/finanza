@@ -2,8 +2,8 @@
 
 import { leggi, modifica, scrivi } from "../database.js";
 import { giorniDallUltimoBackup } from "../backup.js";
-import { daTesto, dataLeggibile, esc, euro, giornoMese, meseAnno, oggi, spostaGiorni, testoData } from "../utili.js";
-import { avvisa, bollino, impostaTitolo, riga, schede } from "./comuni.js";
+import { coloreSicuro, daTesto, dataLeggibile, esc, euro, giornoMese, meseAnno, oggi, spostaGiorni, testoData } from "../utili.js";
+import { avvisa, bollino, impostaTitolo, riga, schede, unaAllaVolta } from "./comuni.js";
 import { bottoneImporta, collegaImporta } from "./importazione.js";
 
 const TIPI = { spesa: "Spese", entrata: "Entrate" };
@@ -39,7 +39,9 @@ const GIORNI_PROMEMORIA_BACKUP = 3;
 const stato = {
     tipo: "spesa",
     periodo: "mese",
-    ancora: oggi(),     // un giorno qualsiasi dentro il periodo mostrato
+    // Un giorno qualsiasi dentro il periodo mostrato. null = oggi: così, se l'app resta aperta
+    // per giorni (sul telefono succede), la Home segue il giorno vero invece di restare indietro.
+    ancora: null,
     conto: "",          // "" = tutti i conti
     aperta: null,       // la categoria di cui si vedono i movimenti
 };
@@ -128,10 +130,11 @@ function mostraBenvenuto() {
         mostraHome(main);
         avvisa(analisi.messaggio);
     });
-    main.querySelector("#inizia-da-zero").onclick = async () => {
+    // unaAllaVolta: con due tocchi veloci i conti verrebbero creati doppi
+    main.querySelector("#inizia-da-zero").onclick = unaAllaVolta(async () => {
         await modifica(creaDatiIniziali);
         mostraHome(main);
-    };
+    });
 }
 
 function creaDatiIniziali() {
@@ -204,7 +207,7 @@ function ciambella(voci, totale) {
     const tratti = voci.map(v => {
         const parte = v.totale / totale * 100;
         // dashoffset 25 = si parte dall'alto (ore 12) invece che da destra
-        const tratto = `<circle cx="21" cy="21" r="${r}" fill="none" stroke="${esc(v.colore ?? "#9e9e9e")}"
+        const tratto = `<circle cx="21" cy="21" r="${r}" fill="none" stroke="${coloreSicuro(v.colore)}"
             stroke-width="5" stroke-dasharray="${parte} ${100 - parte}" stroke-dashoffset="${25 - fatto}"/>`;
         fatto += parte;
         return tratto;
@@ -214,13 +217,14 @@ function ciambella(voci, totale) {
 
 /** Primo e ultimo giorno del periodo scelto, e come scriverlo. */
 function intervallo() {
-    const d = daTesto(stato.ancora);
+    const ancora = stato.ancora ?? oggi();
+    const d = daTesto(ancora);
     const anno = d.getFullYear();
     switch (stato.periodo) {
         case "giorno":
-            return { dal: stato.ancora, al: stato.ancora, etichetta: dataLeggibile(stato.ancora) };
+            return { dal: ancora, al: ancora, etichetta: dataLeggibile(ancora) };
         case "settimana": {
-            const lunedi = spostaGiorni(stato.ancora, -((d.getDay() + 6) % 7)); // getDay(): domenica = 0
+            const lunedi = spostaGiorni(ancora, -((d.getDay() + 6) % 7)); // getDay(): domenica = 0
             const domenica = spostaGiorni(lunedi, 6);
             return { dal: lunedi, al: domenica, etichetta: `${giornoMese(lunedi)} – ${dataLeggibile(domenica)}` };
         }
@@ -228,7 +232,7 @@ function intervallo() {
             return {
                 dal: testoData(new Date(anno, d.getMonth(), 1)),
                 al: testoData(new Date(anno, d.getMonth() + 1, 0)), // il giorno 0 del mese dopo = l'ultimo di questo
-                etichetta: meseAnno(stato.ancora),
+                etichetta: meseAnno(ancora),
             };
         default:
             return { dal: `${anno}-01-01`, al: `${anno}-12-31`, etichetta: String(anno) };
@@ -236,7 +240,7 @@ function intervallo() {
 }
 
 function spostaPeriodo(verso) {
-    const d = daTesto(stato.ancora);
+    const d = daTesto(stato.ancora ?? oggi());
     if (stato.periodo === "giorno") d.setDate(d.getDate() + verso);
     if (stato.periodo === "settimana") d.setDate(d.getDate() + 7 * verso);
     if (stato.periodo === "mese") d.setMonth(d.getMonth() + verso, 1);
@@ -261,7 +265,7 @@ function collega() {
     main.querySelector("#periodo-prima").onclick = () => spostaPeriodo(-1);
     main.querySelector("#periodo-dopo").onclick = () => spostaPeriodo(1);
     main.querySelector("#periodo-oggi").onclick = () => {
-        stato.ancora = oggi();
+        stato.ancora = null;
         ridisegna();
     };
     main.querySelectorAll("[data-voce]").forEach(b => b.onclick = () => {

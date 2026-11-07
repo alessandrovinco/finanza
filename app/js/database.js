@@ -75,8 +75,22 @@ const SCHEMA = `
     group by c.id;
 `;
 
+// Le colonne di ogni tabella: servono per copiare i dati di un backup (vedi apriBackup).
+// L'ordine conta: prima i conti e le categorie, poi i movimenti che li usano.
+const COLONNE = {
+    conti: "id, nome, icona, colore, escluso_dal_totale, archiviato, posizione",
+    categorie: "id, nome, tipo, icona, colore, archiviata, posizione",
+    movimenti: "id, tipo, data, importo, conto_id, conto_destinazione_id, categoria_id, nota, creato_il, modificato_il",
+    impostazioni: "chiave, valore",
+};
+
 let SQL; // il motore sql.js, caricato una volta sola
 let db;  // il database aperto
+
+// Se l'app è aperta in due schede (sul PC), ognuna ha in memoria la sua copia del database:
+// salvando da una si cancellerebbero le modifiche fatte nell'altra. Per questo, dopo ogni
+// salvataggio, le altre schede vengono avvisate su questo "canale" e ricaricano i dati.
+const canale = typeof BroadcastChannel === "function" ? new BroadcastChannel("finanza") : null;
 
 export async function apriDatabase() {
     SQL = await initSqlJs({ locateFile: nome => `lib/${nome}` });
@@ -85,10 +99,24 @@ export async function apriDatabase() {
     aggiornaSchema(db);
 }
 
+/** ridisegna() viene chiamata quando un'altra scheda ha salvato e i dati sono stati ricaricati. */
+export function quandoCambiaAltrove(ridisegna) {
+    if (!canale) return;
+    canale.onmessage = async () => {
+        const salvato = await memoria("get", "database");
+        if (!salvato) return;
+        db.close();
+        db = new SQL.Database(salvato);
+        ridisegna();
+    };
+}
+
+/** Un database vuoto, con le tabelle dell'ultima versione */
 function nuovoDatabase() {
     const nuovo = new SQL.Database();
     nuovo.exec(SCHEMA);
     nuovo.exec("pragma user_version = 1");
+    aggiornaSchema(nuovo);
     return nuovo;
 }
 
@@ -97,9 +125,14 @@ function aggiornaSchema(database) {
     const versione = leggi("pragma user_version", [], database)[0].user_version;
     for (let v = versione + 1; v <= VERSIONE_SCHEMA; v++) {
         database.exec("begin");
-        database.exec(AGGIORNAMENTI[v]);
-        database.exec(`pragma user_version = ${v}`);
-        database.exec("commit");
+        try {
+            database.exec(AGGIORNAMENTI[v]);
+            database.exec(`pragma user_version = ${v}`);
+            database.exec("commit");
+        } catch (errore) {
+            database.exec("rollback"); // il database resta com'era, senza aggiornamenti a metà
+            throw errore;
+        }
     }
 }
 
@@ -113,24 +146,68 @@ export function apriFileSqlite(byte) {
  * Non tocca i dati attuali: per usarlo davvero serve sostituisciDatabase().
  */
 export function apriBackup(byte) {
-    const candidato = new SQL.Database(byte);
-    let versione, tabelle;
+    const backup = new SQL.Database(byte);
     try {
-        versione = leggi("pragma user_version", [], candidato)[0].user_version;
-        tabelle = leggi("select name from sqlite_master where name = 'movimenti'", [], candidato);
-    } catch {
-        tabelle = []; // non è nemmeno un file SQLite
+        let versione, tabelle;
+        try {
+            versione = leggi("pragma user_version", [], backup)[0].user_version;
+            tabelle = leggi("select name from sqlite_master where name = 'movimenti'", [], backup);
+        } catch {
+            tabelle = []; // non è nemmeno un file SQLite
+        }
+        if (tabelle.length === 0 || versione < 1) {
+            throw new Error("Questo file non è un backup valido di questa app.");
+        }
+        if (versione > VERSIONE_SCHEMA) {
+            throw new Error("Questo backup è stato fatto con una versione più recente dell'app.");
+        }
+
+        // Il file del backup non si usa così com'è: i suoi dati vengono copiati in un database
+        // nuovo, creato con le nostre tabelle. Così un file modificato a mano (o preparato apposta
+        // per ingannare l'app) non può portarsi dietro tabelle, viste o "trigger" diversi dai
+        // nostri, e i controlli delle tabelle (check, not null...) valgono anche per i dati importati.
+        const nuovo = nuovoDatabase();
+        try {
+            aggiornaSchema(backup); // un backup fatto con una versione precedente dell'app
+            copiaTabelle(backup, nuovo);
+            controllaDati(nuovo);
+        } catch (errore) {
+            nuovo.close();
+            throw new Error(`Questo backup è danneggiato o contiene dati non validi (${errore.message}).`);
+        }
+        return nuovo;
+    } finally {
+        backup.close();
     }
-    if (tabelle.length === 0 || versione < 1) {
-        candidato.close();
-        throw new Error("Questo file non è un backup valido di questa app.");
+}
+
+function copiaTabelle(da, a) {
+    a.exec("begin");
+    for (const [tabella, colonne] of Object.entries(COLONNE)) {
+        const segnaposto = colonne.split(",").map(() => "?").join(", ");
+        const inserisci = a.prepare(`insert into ${tabella} (${colonne}) values (${segnaposto})`);
+        // exec() restituisce le righe come elenchi di valori, nello stesso ordine delle colonne
+        for (const valori of da.exec(`select ${colonne} from ${tabella}`)[0]?.values ?? []) inserisci.run(valori);
+        inserisci.free();
     }
-    if (versione > VERSIONE_SCHEMA) {
-        candidato.close();
-        throw new Error("Questo backup è stato fatto con una versione più recente dell'app.");
-    }
-    aggiornaSchema(candidato); // un backup fatto con una versione precedente dell'app
-    return candidato;
+    a.exec("commit");
+}
+
+/**
+ * Controlla che i movimenti siano coerenti: data "AAAA-MM-GG", importo in centesimi interi,
+ * conti e categorie che esistono davvero. Si usa per i dati importati da un file.
+ */
+export function controllaDati(database = db) {
+    const sbagliati = leggi(`
+        select count(*) as n from movimenti
+        where data not glob '[0-9][0-9][0-9][0-9]-[0-1][0-9]-[0-3][0-9]'
+           or typeof(importo) != 'integer'
+           or conto_id not in (select id from conti)
+           or (tipo = 'trasferimento' and (conto_destinazione_id is null
+                                           or conto_destinazione_id not in (select id from conti)))
+           or (tipo != 'trasferimento' and categoria_id not in (select id from categorie))
+    `, [], database)[0].n;
+    if (sbagliati) throw new Error(`${sbagliati} movimenti non validi`);
 }
 
 /** Mette al posto del database attuale uno aperto con apriBackup(). */
@@ -169,6 +246,10 @@ export function salvaImpostazione(chiave, valore) {
 
 /** Esegue più scritture "tutte o nessuna": se una fallisce, il database torna com'era. */
 export function inTransazione(operazioni) {
+    // secure_delete: quello che si cancella o si modifica viene sovrascritto con degli zeri,
+    // invece di restare nascosto nel file (e quindi nei backup). Va ripetuto ogni volta
+    // perché sql.js, salvando, chiude e riapre il database e la scelta si perde.
+    db.exec("pragma secure_delete = on");
     db.exec("begin");
     try {
         operazioni();
@@ -185,8 +266,30 @@ export async function modifica(operazioni) {
     await salva();
 }
 
+/**
+ * Cancella tutti i dati. Alla fine VACUUM riscrive il file del database da zero,
+ * così dei dati cancellati non resta traccia nemmeno nei byte del file.
+ */
+export async function cancellaTutto() {
+    inTransazione(() => {
+        for (const tabella of ["movimenti", "categorie", "conti", "impostazioni"]) scrivi(`delete from ${tabella}`);
+    });
+    compatta();
+    await salva();
+}
+
+/** Riscrive il file del database eliminando lo spazio lasciato libero dai dati cancellati. */
+export function compatta() {
+    db.exec("vacuum");
+}
+
 export async function salva() {
-    await memoria("put", "database", db.export());
+    try {
+        await memoria("put", "database", db.export());
+    } catch (errore) {
+        throw new Error(`Non è stato possibile salvare i dati sul dispositivo (${errore?.message ?? errore}).`);
+    }
+    canale?.postMessage("salvato"); // le altre schede aperte ricaricano i dati
 }
 
 // IndexedDB ha un'interfaccia antiquata basata su eventi: questa funzione
@@ -197,10 +300,20 @@ function memoria(azione, chiave, valore) {
         apertura.onupgradeneeded = () => apertura.result.createObjectStore("file");
         apertura.onerror = () => errore(apertura.error);
         apertura.onsuccess = () => {
-            const archivio = apertura.result.transaction("file", "readwrite").objectStore("file");
+            const connessione = apertura.result;
+            const transazione = connessione.transaction("file", azione === "get" ? "readonly" : "readwrite");
+            const archivio = transazione.objectStore("file");
             const richiesta = azione === "get" ? archivio.get(chiave) : archivio.put(valore, chiave);
-            richiesta.onsuccess = () => ok(richiesta.result);
-            richiesta.onerror = () => errore(richiesta.error);
+            // I dati sono al sicuro solo quando la transazione è "completa": se per esempio lo spazio
+            // è finito, la richiesta sembra riuscita ma la transazione poi fallisce.
+            transazione.oncomplete = () => {
+                connessione.close();
+                ok(richiesta.result);
+            };
+            transazione.onabort = () => {
+                connessione.close();
+                errore(transazione.error ?? richiesta.error ?? new Error("salvataggio interrotto"));
+            };
         };
     });
 }

@@ -3,7 +3,7 @@
 
 import { impostazione, leggi, modifica, scrivi } from "../database.js";
 import { centesimi, esc, oggi, perCampo, spostaGiorni } from "../utili.js";
-import { bollino, campiIconaColore, chiediConferma, collegaIconaColore, erroreModulo, impostaTitolo, schede, torna } from "./comuni.js";
+import { alSalvataggio, bollino, campiIconaColore, chiediConferma, collegaIconaColore, erroreModulo, impostaTitolo, schede, torna, unaAllaVolta } from "./comuni.js";
 
 const TIPI = { spesa: "Spesa", entrata: "Entrata", trasferimento: "Trasferimento" };
 const SCORCIATOIE_DATA = { 0: "Oggi", 1: "Ieri", 2: "2 giorni fa" };
@@ -13,7 +13,8 @@ export function mostraMovimento(main, id, parametri) {
     if (id !== "nuovo" && !esistente) return torna();
 
     const m = esistente ?? {
-        tipo: TIPI[parametri.get("tipo")] ? parametri.get("tipo") : "spesa",
+        // hasOwn: solo le chiavi scritte in TIPI (TIPI["constructor"] esiste in ogni oggetto)
+        tipo: Object.hasOwn(TIPI, parametri.get("tipo")) ? parametri.get("tipo") : "spesa",
         data: oggi(),
         importo: null,
         conto_id: contoProposto(),
@@ -41,7 +42,7 @@ export function mostraMovimento(main, id, parametri) {
     `, [m.categoria_id]);
 
     main.innerHTML = `
-        <form class="modulo" data-tipo="${m.tipo}" novalidate>
+        <form class="modulo" data-tipo="${esc(m.tipo)}" novalidate>
             ${schede("scegli-tipo", TIPI, m.tipo)}
 
             <label class="campo importo-grande">Importo
@@ -84,7 +85,7 @@ export function mostraMovimento(main, id, parametri) {
                     `<button type="button" data-giorni="${giorni}">${nome}</button>`).join("")}
                 </div>
                 <!-- max: il calendario non lascia scegliere i giorni dopo oggi -->
-                <input type="date" name="data" value="${m.data}" max="${oggi()}">
+                <input type="date" name="data" value="${esc(m.data)}" max="${oggi()}">
             </div>
 
             <label class="campo">Nota
@@ -145,8 +146,7 @@ export function mostraMovimento(main, id, parametri) {
     });
     finestra.querySelector("#annulla").onclick = () => finestra.close();
 
-    moduloCategoria.onsubmit = async evento => {
-        evento.preventDefault();
+    alSalvataggio(moduloCategoria, async () => {
         const nuova = {
             id: crypto.randomUUID(),
             tipo: modulo.dataset.tipo,
@@ -169,7 +169,7 @@ export function mostraMovimento(main, id, parametri) {
         tipoDi[nuova.id] = nuova.tipo;
         scegliCategoria(nuova.id);
         finestra.close();
-    };
+    });
 
     // Le scorciatoie Oggi / Ieri / 2 giorni fa, evidenziate se corrispondono alla data scelta
     function evidenziaData() {
@@ -185,8 +185,7 @@ export function mostraMovimento(main, id, parametri) {
 
     if (!esistente) modulo.importo.focus();
 
-    modulo.onsubmit = async evento => {
-        evento.preventDefault();
+    alSalvataggio(modulo, async () => {
         const tipo = modulo.dataset.tipo;
         const trasferimento = tipo === "trasferimento";
         const importo = centesimi(modulo.importo.value);
@@ -222,14 +221,14 @@ export function mostraMovimento(main, id, parametri) {
             }
         });
         torna();
-    };
+    });
 
     if (esistente) {
-        modulo.querySelector("#elimina").onclick = async () => {
+        modulo.querySelector("#elimina").onclick = unaAllaVolta(async () => {
             if (!await chiediConferma("Eliminare questo movimento?")) return;
             await modifica(() => scrivi("delete from movimenti where id = ?", [esistente.id]));
             torna();
-        };
+        });
     }
 }
 
@@ -248,7 +247,7 @@ function opzioniConti(conti, scelto) {
 }
 
 /**
- * Il conto già scelto in un movimento nuovo, secondo l'impostazione della pagina Conti:
+ * Il conto già scelto in un movimento nuovo, secondo l'impostazione scelta in Impostazioni:
  * "nessuno" (predefinito: il conto si sceglie ogni volta), "ultimo", oppure l'id del conto principale.
  */
 function contoProposto() {

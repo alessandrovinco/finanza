@@ -1,6 +1,6 @@
 // Pezzi di interfaccia usati da più pagine.
 
-import { esc } from "../utili.js";
+import { coloreSicuro, esc } from "../utili.js";
 
 // Emoji e colori proposti quando si crea o modifica un conto o una categoria
 const EMOJI = [
@@ -66,7 +66,7 @@ export function riga({ icona = null, colore, titolo, sotto = "", importo = "", c
 
 /** Il cerchio colorato con l'emoji dentro */
 export function bollino(icona, colore) {
-    return `<span class="icona" style="background: ${esc(colore)}33">${esc(icona)}</span>`;
+    return `<span class="icona" style="background: ${coloreSicuro(colore)}33">${esc(icona)}</span>`;
 }
 
 /** Bottoni a schede (es. Spese | Entrate). La scheda scelta ha la classe "attiva". */
@@ -84,7 +84,7 @@ export function campiIconaColore(icona, colore) {
         </label>
         <div class="tavolozza">${EMOJI.map(e => `<button type="button" data-emoji="${e}">${e}</button>`).join("")}</div>
         <label class="campo">Colore
-            <input type="color" name="colore" value="${esc(colore)}">
+            <input type="color" name="colore" value="${coloreSicuro(colore)}">
         </label>
         <div class="tavolozza colori">${COLORI.map(c =>
             `<button type="button" data-colore="${c}" style="background: ${c}" aria-label="${c}"></button>`
@@ -111,16 +111,62 @@ export function chiediConferma(messaggio, etichetta = "Elimina") {
                 <button type="button" class="conferma-pericolo" data-risposta="si">${esc(etichetta)}</button>
             </div>
         </div>`;
-    document.body.append(finestra);
+    return aspettaRisposta(finestra);
+}
 
+/**
+ * Mostra una finestra con dei bottoni data-risposta e aspetta quale viene toccato:
+ * true per quello con data-risposta="si", false per gli altri.
+ * Il tasto Esc, o la finestra chiusa perché si è cambiata pagina, valgono come Annulla.
+ */
+export function aspettaRisposta(finestra) {
+    document.body.append(finestra);
     return new Promise(risolvi => {
-        finestra.querySelectorAll("[data-risposta]").forEach(b => b.onclick = () => finestra.close(b.dataset.risposta));
-        // "close" arriva sia dai bottoni sia dal tasto Esc (che vale come Annulla)
-        finestra.onclose = () => {
+        const rispondi = si => {
+            finestra.onclose = null; // si risponde una volta sola
+            finestra.close();
             finestra.remove();
-            risolvi(finestra.returnValue === "si");
+            risolvi(si);
         };
+        // La risposta arriva direttamente dal bottone, senza aspettare l'evento "close":
+        // alcuni browser lo mandano in ritardo (o per niente, se la pagina non è in primo piano)
+        finestra.querySelectorAll("[data-risposta]").forEach(b => b.onclick = () => rispondi(b.dataset.risposta === "si"));
+        finestra.onclose = () => rispondi(false);
         finestra.showModal();
+    });
+}
+
+/**
+ * Avvolge un'azione che salva qualcosa: finché non ha finito, gli altri tocchi vengono ignorati.
+ * Senza, su un telefono lento due tocchi veloci su "Salva" creerebbero due movimenti uguali.
+ */
+export function unaAllaVolta(azione) {
+    let inCorso = false;
+    return async (...argomenti) => {
+        if (inCorso) return;
+        inCorso = true;
+        try {
+            return await azione(...argomenti);
+        } finally {
+            inCorso = false;
+        }
+    };
+}
+
+/** Collega il tasto Salva di un modulo all'azione, una volta sola alla volta (vedi unaAllaVolta). */
+export function alSalvataggio(modulo, azione) {
+    const salva = unaAllaVolta(azione);
+    modulo.onsubmit = evento => {
+        evento.preventDefault(); // subito, anche se il tocco viene ignorato: il modulo non deve ricaricare la pagina
+        return salva();
+    };
+}
+
+/** Chiude le finestre ancora aperte (es. una conferma) quando si cambia pagina. */
+export function chiudiFinestre() {
+    document.querySelectorAll("dialog[open]").forEach(finestra => {
+        finestra.close();
+        finestra.onclose?.(); // le conferme rispondono subito "Annulla" (vedi aspettaRisposta)
     });
 }
 

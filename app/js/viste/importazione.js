@@ -4,7 +4,7 @@
 import { leggi } from "../database.js";
 import { analizzaFile } from "../importa.js";
 import { dataLeggibile, esc } from "../utili.js";
-import { avvisa } from "./comuni.js";
+import { aspettaRisposta, avvisa, unaAllaVolta } from "./comuni.js";
 
 /** Un bottone che apre la scelta del file. Va poi collegato con collegaImporta(). */
 export function bottoneImporta(etichetta, classe = "bottone") {
@@ -14,7 +14,7 @@ export function bottoneImporta(etichetta, classe = "bottone") {
 
 /** Dopo un'importazione riuscita chiama dopo(analisi): analisi.messaggio dice cosa è successo. */
 export function collegaImporta(contenitore, dopo) {
-    contenitore.querySelectorAll("[data-importa]").forEach(input => input.onchange = async () => {
+    contenitore.querySelectorAll("[data-importa]").forEach(input => input.onchange = unaAllaVolta(async () => {
         const file = input.files[0];
         input.value = ""; // così si può scegliere di nuovo lo stesso file
         if (!file) return;
@@ -26,13 +26,15 @@ export function collegaImporta(contenitore, dopo) {
         } catch (errore) {
             avvisa(errore.message, true);
         }
-    });
+    }));
 }
 
 // Mostra cosa contiene il file e aspetta la risposta: true = Importa, false = Annulla
 function conferma(analisi, nomeFile) {
     const r = analisi.riepilogo;
-    const attuali = leggi("select count(*) as n from movimenti")[0].n;
+    // Anche senza movimenti, conti e categorie già creati (es. con "Inizia da zero") verrebbero sostituiti
+    const attuali = leggi(`select (select count(*) from movimenti) as movimenti,
+                                  (select count(*) from conti) + (select count(*) from categorie) as altri`)[0];
 
     const finestra = document.createElement("dialog");
     finestra.innerHTML = `
@@ -49,22 +51,13 @@ function conferma(analisi, nomeFile) {
                         : "nessun movimento"}</li>
                 </ul>
             </div>
-            ${attuali ? `<p class="attenzione">⚠️ Sostituisce tutti i dati attuali (${attuali} movimenti).
+            ${attuali.movimenti || attuali.altri ? `<p class="attenzione">⚠️ Sostituisce tutti i dati attuali
+                (${attuali.movimenti ? `${attuali.movimenti} movimenti` : "conti e categorie"}).
                 Se vuoi poterli recuperare, annulla e fai prima un backup.</p>` : ""}
             <div class="azioni">
                 <button type="button" class="bottone secondario" data-risposta="">Annulla</button>
                 <button type="button" data-risposta="si">Importa</button>
             </div>
         </div>`;
-    document.body.append(finestra);
-
-    return new Promise(risolvi => {
-        finestra.querySelectorAll("[data-risposta]").forEach(b => b.onclick = () => finestra.close(b.dataset.risposta));
-        // "close" arriva sia dai bottoni sia dal tasto Esc (che vale come Annulla)
-        finestra.onclose = () => {
-            finestra.remove();
-            risolvi(finestra.returnValue === "si");
-        };
-        finestra.showModal();
-    });
+    return aspettaRisposta(finestra);
 }

@@ -50,7 +50,13 @@ async function analizzaBackup(byte) {
 
 async function analizzaMoneyManager(byte) {
     const mm = await apriMoneyManager(byte);
-    const riepilogo = riepilogoMoneyManager(mm);
+    let riepilogo;
+    try {
+        riepilogo = riepilogoMoneyManager(mm);
+    } catch {
+        mm.close(); // un file con il nome giusto ma dentro tabelle diverse
+        throw new Error("Questo file non sembra un backup di Money Manager.");
+    }
     return {
         tipo: "Backup di Money Manager",
         riepilogo,

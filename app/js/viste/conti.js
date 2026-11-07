@@ -2,7 +2,7 @@
 
 import { impostazione, leggi, modifica, scrivi } from "../database.js";
 import { dataLeggibile, esc, euro } from "../utili.js";
-import { campiIconaColore, chiediConferma, collegaIconaColore, erroreModulo, impostaTitolo, riga, torna } from "./comuni.js";
+import { alSalvataggio, campiIconaColore, chiediConferma, collegaIconaColore, erroreModulo, impostaTitolo, riga, torna, unaAllaVolta } from "./comuni.js";
 
 export function mostraConti(main) {
     impostaTitolo("Conti");
@@ -103,8 +103,7 @@ export function mostraConto(main, id) {
     collegaIconaColore(modulo);
     if (nuovo) modulo.nome.focus();
 
-    modulo.onsubmit = async evento => {
-        evento.preventDefault();
+    alSalvataggio(modulo, async () => {
         const nome = modulo.nome.value.trim();
         if (!nome) return erroreModulo(modulo, "Dai un nome al conto.");
         if (!modulo.icona.value.trim()) return erroreModulo(modulo, "Scegli un'icona.");
@@ -121,11 +120,18 @@ export function mostraConto(main, id) {
             }
         });
         torna();
-    };
-
-    modulo.querySelector("#elimina")?.addEventListener("click", async () => {
-        if (!await chiediConferma(`Eliminare il conto "${conto.nome}"?`)) return;
-        await modifica(() => scrivi("delete from conti where id = ?", [id]));
-        torna();
     });
+
+    modulo.querySelector("#elimina")?.addEventListener("click", unaAllaVolta(async () => {
+        if (!await chiediConferma(`Eliminare il conto "${conto.nome}"?`)) return;
+        await modifica(() => {
+            // Controllo rifatto al momento di eliminare: la pagina potrebbe essere vecchia
+            // (es. un movimento aggiunto da un'altra scheda) e un movimento senza conto non si vedrebbe più
+            if (leggi("select 1 from movimenti where conto_id = ? or conto_destinazione_id = ? limit 1", [id, id]).length) {
+                throw new Error("Questo conto ha dei movimenti, quindi non si può eliminare.");
+            }
+            scrivi("delete from conti where id = ?", [id]);
+        });
+        torna();
+    }));
 }

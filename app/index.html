@@ -2,6 +2,13 @@
 <html lang="it">
 <head>
     <meta charset="utf-8">
+    <!-- Content Security Policy: dice al browser da dove può caricare script, stili e dati.
+         Solo dal sito stesso ('self'): se mai qualcuno riuscisse a infilare del codice nella pagina
+         (es. con un file importato fatto apposta), il browser si rifiuterebbe di eseguirlo
+         e di mandare i dati altrove. 'wasm-unsafe-eval' serve a sql.js (SQLite è in WebAssembly);
+         'unsafe-inline' negli stili serve per i colori delle icone (style="..."). -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+    <meta name="referrer" content="no-referrer">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-title" content="Finanza">

@@ -82,6 +82,15 @@ export function spostaGiorni(data, giorni) {
     return testoData(d);
 }
 
+/**
+ * Il colore se è davvero un colore "#rrggbb", altrimenti grigio. I colori finiscono nello stile
+ * della pagina (style="..."): un valore strano, arrivato per esempio da un file importato,
+ * potrebbe aggiungere regole di stile, come far caricare un'immagine da un altro sito.
+ */
+export function coloreSicuro(colore) {
+    return /^#[0-9a-f]{6}$/i.test(colore) ? colore : "#9e9e9e";
+}
+
 /** Rende innocuo un testo scritto dall'utente prima di inserirlo nella pagina. */
 export function esc(testo) {
     const sostituti = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };

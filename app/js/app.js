@@ -4,14 +4,14 @@
 // "pagina" disegnare dentro <main>: #/conti, #/movimento/nuovo?tipo=spesa, ...
 // Così il tasto Indietro del telefono funziona come in un sito normale.
 
-import { apriDatabase, impostazione } from "./database.js";
+import { apriDatabase, impostazione, quandoCambiaAltrove } from "./database.js";
 import { esc, importiSonoNascosti, nascondiImporti } from "./utili.js";
 import { mostraHome } from "./viste/home.js";
 import { mostraMovimento } from "./viste/movimento.js";
 import { mostraConti, mostraConto } from "./viste/conti.js";
 import { mostraCategorie, mostraCategoria } from "./viste/categorie.js";
 import { mostraImpostazioni } from "./viste/impostazioni.js";
-import { nascondiAvviso, segnaNavigazione, torna } from "./viste/comuni.js";
+import { avvisa, chiudiFinestre, nascondiAvviso, segnaNavigazione, torna } from "./viste/comuni.js";
 
 // A quale voce della barra in basso appartiene ogni pagina
 const SEZIONE = { conto: "conti", categoria: "categorie", movimento: "home", dati: "impostazioni" };
@@ -27,7 +27,17 @@ const CHIAVE_IMPORTI_NASCOSTI = "importiNascosti";
 const main = document.querySelector("main");
 const occhio = document.querySelector("#occhio");
 
-await apriDatabase();
+// Se qualcosa va storto dopo un tocco (per esempio un salvataggio non riuscito), lo si dice
+// invece di far finta di niente: altrimenti si potrebbe credere di aver salvato
+window.addEventListener("unhandledrejection", evento => mostraErrore(evento.reason));
+window.addEventListener("error", evento => mostraErrore(evento.error ?? evento.message));
+
+try {
+    await apriDatabase();
+} catch (errore) {
+    main.innerHTML = `<p class="vuoto">Non riesco ad aprire i dati dell'app: ${esc(errore?.message ?? errore)}</p>`;
+    throw errore; // il resto dell'app non parte
+}
 navigator.storage?.persist?.(); // chiede al browser di non cancellare mai i dati del sito
 navigator.serviceWorker?.register("sw.js"); // per aprire l'app anche offline (vedi sw.js)
 
@@ -44,17 +54,33 @@ window.addEventListener("hashchange", () => {
     segnaNavigazione();
     mostraPagina();
 });
+// Un'altra scheda ha salvato dei dati: si ridisegna la pagina con quelli nuovi, tranne
+// quelle con un modulo, per non cancellare quello che si sta scrivendo
+quandoCambiaAltrove(() => {
+    if (!PAGINE_CON_MODULO.includes(paginaAttuale().pagina)) mostraPagina();
+});
 mostraPagina();
 
 function leggiUltimaScelta() {
     try { return localStorage.getItem(CHIAVE_IMPORTI_NASCOSTI) === "1"; } catch { return false; }
 }
 
-function mostraPagina() {
+function mostraErrore(errore) {
+    console.error(errore);
+    avvisa(`Si è verificato un errore: ${errore?.message ?? errore}`, true);
+}
+
+/** "#/movimento/abc?tipo=spesa" -> { pagina: "movimento", id: "abc", parametri: tipo=spesa } */
+function paginaAttuale() {
     const [percorso, query = ""] = location.hash.slice(1).split("?");
     const [pagina = "home", id] = percorso.split("/").filter(Boolean);
-    const parametri = new URLSearchParams(query);
+    return { pagina, id, parametri: new URLSearchParams(query) };
+}
 
+function mostraPagina() {
+    const { pagina, id, parametri } = paginaAttuale();
+
+    chiudiFinestre();
     nascondiAvviso();
     main.innerHTML = "";
     try {

@@ -2,7 +2,7 @@
 
 import { leggi, modifica, scrivi } from "../database.js";
 import { esc } from "../utili.js";
-import { bollino, campiIconaColore, chiediConferma, collegaIconaColore, erroreModulo, impostaTitolo, schede, torna } from "./comuni.js";
+import { alSalvataggio, bollino, campiIconaColore, chiediConferma, collegaIconaColore, erroreModulo, impostaTitolo, schede, torna, unaAllaVolta } from "./comuni.js";
 
 const TIPI = { spesa: "Spese", entrata: "Entrate" };
 
@@ -82,8 +82,7 @@ export function mostraCategoria(main, id, parametri) {
     });
     if (nuova) modulo.nome.focus();
 
-    modulo.onsubmit = async evento => {
-        evento.preventDefault();
+    alSalvataggio(modulo, async () => {
         const nome = modulo.nome.value.trim();
         if (!nome) return erroreModulo(modulo, "Dai un nome alla categoria.");
         if (!modulo.icona.value.trim()) return erroreModulo(modulo, "Scegli un'icona.");
@@ -100,11 +99,17 @@ export function mostraCategoria(main, id, parametri) {
             }
         });
         torna();
-    };
-
-    modulo.querySelector("#elimina")?.addEventListener("click", async () => {
-        if (!await chiediConferma(`Eliminare la categoria "${categoria.nome}"?`)) return;
-        await modifica(() => scrivi("delete from categorie where id = ?", [id]));
-        torna();
     });
+
+    modulo.querySelector("#elimina")?.addEventListener("click", unaAllaVolta(async () => {
+        if (!await chiediConferma(`Eliminare la categoria "${categoria.nome}"?`)) return;
+        await modifica(() => {
+            // Controllo rifatto al momento di eliminare (vedi lo stesso controllo in conti.js)
+            if (leggi("select 1 from movimenti where categoria_id = ? limit 1", [id]).length) {
+                throw new Error("Questa categoria è usata da dei movimenti, quindi non si può eliminare.");
+            }
+            scrivi("delete from categorie where id = ?", [id]);
+        });
+        torna();
+    }));
 }

@@ -1,10 +1,10 @@
 // La pagina Impostazioni (#/impostazioni): tutte le scelte dell'app in un posto solo,
 // più backup e importazione (che prima stavano nella pagina Dati).
 
-import { impostazione, leggi, modifica, salvaImpostazione, scrivi } from "../database.js";
+import { cancellaTutto, impostazione, leggi, modifica, salvaImpostazione } from "../database.js";
 import { creaBackup, ultimoBackup } from "../backup.js";
 import { dataLeggibile, esc, nascondiImporti } from "../utili.js";
-import { avvisa, chiediConferma, impostaTitolo } from "./comuni.js";
+import { avvisa, chiediConferma, impostaTitolo, unaAllaVolta } from "./comuni.js";
 import { bottoneImporta, collegaImporta } from "./importazione.js";
 
 export function mostraImpostazioni(main) {
@@ -70,13 +70,13 @@ export function mostraImpostazioni(main) {
     privacy.value = impostazione("privacy_apertura", "ricorda");
     privacy.onchange = () => modifica(() => salvaImpostazione("privacy_apertura", privacy.value));
 
-    main.querySelector("#bottone-backup").onclick = async () => {
+    main.querySelector("#bottone-backup").onclick = unaAllaVolta(async () => {
         try {
             if (await creaBackup()) mostraImpostazioni(main);
         } catch (errore) {
             avvisa(errore.message, true);
         }
-    };
+    });
 
     collegaImporta(main, analisi => {
         mostraImpostazioni(main);
@@ -84,19 +84,18 @@ export function mostraImpostazioni(main) {
     });
 
     // Riporta l'app come al primo avvio: database vuoto e preferenze del dispositivo cancellate
-    main.querySelector("#elimina-tutto").onclick = async () => {
+    main.querySelector("#elimina-tutto").onclick = unaAllaVolta(async () => {
         if (!await chiediConferma("Eliminare tutti i conti, le categorie, i movimenti e le impostazioni?\n\n" +
                 "Non si può annullare: se vuoi poterli recuperare, annulla e fai prima un backup.",
                 "Elimina tutto")) return;
-        await modifica(() => {
-            scrivi("delete from movimenti");
-            scrivi("delete from categorie");
-            scrivi("delete from conti");
-            scrivi("delete from impostazioni");
-        });
-        // Data dell'ultimo backup e scelta dell'occhio (stanno nel localStorage, vedi backup.js e app.js)
-        try { localStorage.clear(); } catch { }
+        await cancellaTutto();
+        // Data dell'ultimo backup e scelta dell'occhio (stanno nel localStorage, vedi backup.js e app.js).
+        // Solo le nostre chiavi, non localStorage.clear(): su GitHub Pages tutti i siti di uno stesso
+        // utente condividono lo stesso localStorage, e si cancellerebbero anche i dati degli altri.
+        try {
+            for (const chiave of ["ultimoBackup", "importiNascosti"]) localStorage.removeItem(chiave);
+        } catch { }
         nascondiImporti(false);
         location.hash = "#/"; // la Home, senza conti, mostra la configurazione iniziale
-    };
+    });
 }
